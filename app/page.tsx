@@ -291,7 +291,8 @@ export default function Home() {
   };
 
   const today = new Date().toLocaleDateString();
-  const todayCount = attendance.filter((a) => a.date === today).length;
+  const presentCount = new Set(attendance.filter((a) => a.date === today).map((a) => a.id)).size;
+  const absentCount = Math.max(0, students.length - presentCount);
   const enrolledCount = students.filter((s) => s.descriptor?.length).length;
 
   return <main className="shell">
@@ -299,21 +300,21 @@ export default function Home() {
       <div className="brand"><div className="brand-icon">S</div><div><strong>STUDENT<span>MONITOR</span></strong><small>ATTENDANCE PORTAL</small></div></div>
       <div className="side-label">WORKSPACE</div>
       <button className="nav-item active" onClick={() => setActiveTab("id")}>▦ <span>Dashboard</span></button>
-      <button className="nav-item" onClick={() => { setActiveTab("id"); document.getElementById("scanner")?.scrollIntoView({ behavior: "smooth" }); }}>▤ <span>ID Scan</span></button>
+      <button className="nav-item" onClick={() => { setActiveTab("id"); document.getElementById("scanner")?.scrollIntoView({ behavior: "smooth" }); }}>▤ <span>PICTURE / SCANNER / ID SCANNER</span></button>
       <button className="nav-item" onClick={() => { setActiveTab("face"); document.getElementById("scanner")?.scrollIntoView({ behavior: "smooth" }); }}>◎ <span>Face Recognition</span></button>
-      <button className="nav-item" onClick={() => document.getElementById("students")?.scrollIntoView({ behavior: "smooth" })}>♙ <span>Students</span></button>
-      <button className="nav-item" onClick={() => document.getElementById("records")?.scrollIntoView({ behavior: "smooth" })}>▧ <span>Attendance Records</span></button>
+      <button className="nav-item" onClick={() => document.getElementById("students")?.scrollIntoView({ behavior: "smooth" })}>♙ <span>STUDENT INFORMATION</span></button>
+      <button className="nav-item" onClick={() => document.getElementById("records")?.scrollIntoView({ behavior: "smooth" })}>▧ <span>VIEW ATTENDANCE REPORT</span></button>
       <div className="sidebar-bottom"><div className="secure-dot" /> Browser-based demo<br /><small>Data stored on this device</small></div>
     </aside>
     <section className="main-area">
       <header className="topbar"><div><div className="eyebrow">CAMPUS OPERATIONS / ATTENDANCE</div><h1>Student Monitoring System</h1><p>Manage student attendance with ID scanning and face recognition.</p></div><div className="date-pill">◷ {new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</div></header>
       <div className="stats">
-        <article className="stat-card"><div className="stat-icon blue">♙</div><div><span>REGISTERED STUDENTS</span><strong>{students.length}</strong><small>Student profiles</small></div></article>
-        <article className="stat-card"><div className="stat-icon green">✓</div><div><span>ATTENDANCE TODAY</span><strong>{todayCount}</strong><small>Unique student records</small></div></article>
-        <article className="stat-card"><div className="stat-icon purple">◎</div><div><span>FACES ENROLLED</span><strong>{enrolledCount}</strong><small>Ready for matching</small></div></article>
+        <article className="stat-card"><div className="stat-icon blue">♙</div><div><span>TOTAL STUDENT</span><strong>{students.length}</strong><small>Registered students</small></div></article>
+        <article className="stat-card"><div className="stat-icon green">✓</div><div><span>PRESENT</span><strong>{presentCount}</strong><small>Attendance recorded today</small></div></article>
+        <article className="stat-card"><div className="stat-icon purple">◎</div><div><span>ABSENT</span><strong>{absentCount}</strong><small>Not yet recorded today</small></div></article>
       </div>
       <section className="panel scanner-panel" id="scanner">
-        <div className="panel-heading"><div><div className="eyebrow">QUICK ATTENDANCE</div><h2>Identify Student</h2><p>Choose an ID scan or face recognition method.</p></div><span className="live-badge"><i /> SYSTEM READY</span></div>
+        <div className="panel-heading"><div><div className="eyebrow">RECORD ATTENDANCE</div><h2>PICTURE / SCANNER / ID SCANNER</h2><p>Choose an ID scan or face recognition method.</p></div><span className="live-badge"><i /> SYSTEM READY</span></div>
         <div className="tabs"><button className={activeTab === "id" ? "tab selected" : "tab"} onClick={() => setActiveTab("id")}>▤ ID Scan</button><button className={activeTab === "face" ? "tab selected" : "tab"} onClick={() => setActiveTab("face")}>◎ Face Recognition</button></div>
         {activeTab === "id" ? <div className="scan-content">
           {(qrScanning || printedIdScanning) && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /><span className="scan-camera-label">{printedIdScanning ? "Keep the I.D. NO. in view" : "Align QR code or barcode"}</span></div>}
@@ -333,12 +334,12 @@ export default function Home() {
         <div className={status.toLowerCase().includes("recorded") ? "status-message success" : "status-message"} role="status"><span>ⓘ</span>{status}</div>
       </section>
       <section className="panel" id="students">
-        <div className="panel-heading"><div><div className="eyebrow">DIRECTORY</div><h2>Student Directory</h2><p>Manage registered student profiles and face enrollment.</p></div><button className="primary-btn" onClick={() => setShowAdd((v) => !v)}>＋ Add Student</button></div>
+        <div className="panel-heading"><div><div className="eyebrow">DIRECTORY</div><h2>STUDENT INFORMATION</h2><p>Manage student profiles and face enrollment.</p></div><button className="primary-btn" onClick={() => setShowAdd((v) => !v)}>＋ Add Student</button></div>
         {showAdd && <form className="add-form" onSubmit={addStudent}><input value={newId} onChange={(e) => setNewId(e.target.value)} placeholder="Student ID" required /><input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Full name" required /><select value={newCourse} onChange={(e) => setNewCourse(e.target.value)}><option>BS Information Technology</option><option>BS Computer Science</option><option>BS Information Systems</option><option>Other</option></select><select value={newYear} onChange={(e) => setNewYear(e.target.value)}><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select><button className="primary-btn" type="submit">Save student</button></form>}
         <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>STUDENT ID</th><th>COURSE / YEAR</th><th>FACE PROFILE</th><th>ACTION</th></tr></thead><tbody>{students.map((s) => <tr key={s.id}><td><div className="student-cell"><div className="student-avatar">{s.name.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase()}</div><strong>{s.name}</strong></div></td><td className="mono">{s.id}</td><td>{s.course}<small className="subline">{s.year}</small></td><td>{s.descriptor?.length ? <span className="pill enrolled">✓ Enrolled</span> : <span className="pill not-enrolled">Not enrolled</span>}</td><td><button className="delete-btn" type="button" onClick={() => removeStudent(s)} aria-label={`Delete ${s.name}`}>Delete</button></td></tr>)}</tbody></table>{!students.length && <div className="empty-state">No students yet. Add a student to begin.</div>}</div>
       </section>
       <section className="panel" id="records">
-        <div className="panel-heading"><div><div className="eyebrow">ATTENDANCE LOG</div><h2>Recent Attendance</h2><p>Latest successful ID scans and face matches.</p></div><button className="secondary-btn" onClick={exportCsv} disabled={!attendance.length}>↓ Export CSV</button></div>
+        <div className="panel-heading"><div><div className="eyebrow">ATTENDANCE LOG</div><h2>VIEW ATTENDANCE REPORT</h2><p>Review attendance records and export a report.</p></div><button className="secondary-btn" onClick={exportCsv} disabled={!attendance.length}>↓ Export CSV</button></div>
         <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>DATE / TIME</th><th>METHOD</th><th>STATUS</th></tr></thead><tbody>{attendance.slice(0, 20).map((a, i) => <tr key={a.id + a.date}><td><div className="student-cell"><div className="student-avatar">{a.name.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase()}</div><div><strong>{a.name}</strong><small className="subline mono">{a.id}</small></div></div></td><td>{a.date}<small className="subline">{a.time}</small></td><td><span className="method-tag">{a.method}</span></td><td><span className="pill enrolled">✓ Recorded</span></td></tr>)}</tbody></table>{!attendance.length && <div className="empty-state"><div className="empty-icon">▧</div><strong>No attendance records yet</strong><span>Scan a student ID or recognize an enrolled face to record attendance.</span></div>}</div>
       </section>
       <footer>STUDENT MONITORING SYSTEM <span>•</span> ID SCANNING & FACE RECOGNITION <span>•</span> DEMO BUILD</footer>
