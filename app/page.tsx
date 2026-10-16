@@ -30,7 +30,7 @@ export default function Home() {
   const [showAdd, setShowAdd] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+  const scannerControlsRef = useRef<{ stop: () => void } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -115,7 +115,7 @@ export default function Home() {
     setFaceBusy(false);
   };
 
-  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); readerRef.current?.reset(); }, []);
+  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); scannerControlsRef.current?.stop(); scannerControlsRef.current = null; }, []);
 
   const getDescriptor = async (input: HTMLVideoElement | HTMLImageElement) => {
     const api = await loadModels();
@@ -160,22 +160,29 @@ export default function Home() {
     if (!qrScanning || activeTab !== "id" || !videoRef.current) return;
     let active = true;
     const reader = new BrowserMultiFormatReader();
-    readerRef.current = reader;
     reader.decodeFromVideoDevice(undefined, videoRef.current, (result) => {
       if (!result || !active) return;
       active = false;
-      reader.reset();
+      scannerControlsRef.current?.stop();
+      scannerControlsRef.current = null;
       setQrScanning(false);
       const scanned = result.getText().trim();
       setIdInput(scanned);
       const found = students.find((s) => s.id.toLowerCase() === scanned.toLowerCase());
       if (found) markAttendance(found, "QR / Barcode Scan");
       else setStatus(`Scanned “${scanned}” but no matching student ID exists.`);
+    }).then((controls) => {
+      if (!active) controls.stop();
+      else scannerControlsRef.current = controls;
     }).catch((e: any) => {
       if (active) setStatus(e?.message || "Unable to start ID camera scanner.");
       setQrScanning(false);
     });
-    return () => { active = false; reader.reset(); };
+    return () => {
+      active = false;
+      scannerControlsRef.current?.stop();
+      scannerControlsRef.current = null;
+    };
   }, [qrScanning, activeTab, students, markAttendance]);
 
   const addStudent = (e: React.FormEvent) => {
