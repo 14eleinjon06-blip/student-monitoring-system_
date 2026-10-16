@@ -7,10 +7,10 @@ type Student = { id: string; name: string; course: string; year: string; photo?:
 type Attendance = { id: string; name: string; time: string; method: string; date: string };
 declare global { interface Window { faceapi?: any; Tesseract?: any } }
 
-const initialStudents: Student[] = [
-  { id: "2026-001", name: "Alex Santos", course: "BS Information Technology", year: "3rd Year" },
-  { id: "2026-002", name: "Jamie Cruz", course: "BS Information Technology", year: "2nd Year" },
-  { id: "2026-003", name: "Taylor Reyes", course: "BS Computer Science", year: "1st Year" },
+const demoStudents = [
+  { id: "2026-001", name: "Alex Santos" },
+  { id: "2026-002", name: "Jamie Cruz" },
+  { id: "2026-003", name: "Taylor Reyes" },
 ];
 
 export default function Home() {
@@ -40,15 +40,18 @@ export default function Home() {
     try {
       const savedStudents = localStorage.getItem("sms_students_v2");
       const savedAttendance = localStorage.getItem("sms_attendance_v2");
-      setStudents(savedStudents ? JSON.parse(savedStudents) : initialStudents);
-      setAttendance(savedAttendance ? JSON.parse(savedAttendance) : []);
+      const storedStudents = savedStudents ? JSON.parse(savedStudents) as Student[] : [];
+      const oldDemoProfiles = new Set(demoStudents.map((student) => `${student.id}|${student.name}`));
+      setStudents(Array.isArray(storedStudents) ? storedStudents.filter((student) => !oldDemoProfiles.has(`${student.id}|${student.name}`)) : []);
+      const storedAttendance = savedAttendance ? JSON.parse(savedAttendance) as Attendance[] : [];
+      setAttendance(Array.isArray(storedAttendance) ? storedAttendance.filter((record) => !oldDemoProfiles.has(`${record.id}|${record.name}`)) : []);
     } catch {
-      setStudents(initialStudents);
+      setStudents([]);
       setAttendance([]);
     }
   }, []);
 
-  useEffect(() => { if (students.length) localStorage.setItem("sms_students_v2", JSON.stringify(students)); }, [students]);
+  useEffect(() => { localStorage.setItem("sms_students_v2", JSON.stringify(students)); }, [students]);
   useEffect(() => { localStorage.setItem("sms_attendance_v2", JSON.stringify(attendance)); }, [attendance]);
 
   const markAttendance = useCallback((student: Student, method: string) => {
@@ -275,6 +278,12 @@ export default function Home() {
     setStatus("Student added. Start the camera and enroll their face to enable recognition.");
   };
 
+  const removeStudent = (student: Student) => {
+    if (!window.confirm(`Delete ${student.name} from the student directory?`)) return;
+    setStudents((prev) => prev.filter((s) => s.id !== student.id));
+    setStatus(`${student.name} was deleted from the student directory.`);
+  };
+
   const exportCsv = () => {
     const csv = ["Student ID,Name,Date,Time,Method", ...attendance.map((a) => [a.id, a.name, a.date, a.time, a.method].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))].join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
@@ -310,9 +319,9 @@ export default function Home() {
           {(qrScanning || printedIdScanning) && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /><span className="scan-camera-label">{printedIdScanning ? "Keep the I.D. NO. in view" : "Align QR code or barcode"}</span></div>}
           <div className="scan-illustration"><div className="id-card-graphic"><div className="avatar-placeholder">♙</div><div className="fake-lines"><b /><i /><i /></div><div className="barcode">▥ ▥ ▥ ▥ ▥ ▥ ▥</div></div><div className="scan-ring">▤</div></div>
           <div className="scan-form"><h3>Scan student ID</h3><p>Use a USB scanner, scan a QR code or barcode, read the printed I.D. NO. from your card, or enter it manually.</p>
-            <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="e.g. 2026-001" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
+            <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="e.g. 123-4567" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
             <div className="button-row scan-buttons"><button className="secondary-btn" onClick={() => qrScanning ? setQrScanning(false) : startQrScanner()}>{qrScanning ? "Stop barcode scanner" : "◎ Scan QR / barcode"}</button><button className="secondary-btn" onClick={() => printedIdScanning ? printedScanStopRef.current?.() : void startPrintedIdScanner()}>{printedIdScanning ? "Stop text scanner" : "▤ Read printed ID number"}</button></div>
-            <div className="hint">Printed ID reading looks for the number beside “I.D. NO.” on the front of your card. Check the result before verifying. The student must already be in the directory. Demo IDs: {students.slice(0, 3).map((s) => s.id).join(" · ") || "Add a student to begin"}</div>
+            <div className="hint">Printed ID reading looks for the number beside “I.D. NO.” on the front of your card. Check the result before verifying. The student must already be in the directory. Add students in the Student Directory below.</div>
           </div>
         </div> : <div className="face-content">
           <div className="camera-frame">{cameraOn ? <video ref={videoRef} autoPlay muted playsInline /> : <div className="camera-placeholder"><div className="face-outline">◯</div><strong>Camera is off</strong><span>Turn on the camera to enroll or recognize a face.</span></div>}{cameraOn && <div className="face-guide" />}</div>
@@ -326,7 +335,7 @@ export default function Home() {
       <section className="panel" id="students">
         <div className="panel-heading"><div><div className="eyebrow">DIRECTORY</div><h2>Student Directory</h2><p>Manage registered student profiles and face enrollment.</p></div><button className="primary-btn" onClick={() => setShowAdd((v) => !v)}>＋ Add Student</button></div>
         {showAdd && <form className="add-form" onSubmit={addStudent}><input value={newId} onChange={(e) => setNewId(e.target.value)} placeholder="Student ID" required /><input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Full name" required /><select value={newCourse} onChange={(e) => setNewCourse(e.target.value)}><option>BS Information Technology</option><option>BS Computer Science</option><option>BS Information Systems</option><option>Other</option></select><select value={newYear} onChange={(e) => setNewYear(e.target.value)}><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select><button className="primary-btn" type="submit">Save student</button></form>}
-        <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>STUDENT ID</th><th>COURSE / YEAR</th><th>FACE PROFILE</th></tr></thead><tbody>{students.map((s) => <tr key={s.id}><td><div className="student-cell"><div className="student-avatar">{s.name.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase()}</div><strong>{s.name}</strong></div></td><td className="mono">{s.id}</td><td>{s.course}<small className="subline">{s.year}</small></td><td>{s.descriptor?.length ? <span className="pill enrolled">✓ Enrolled</span> : <span className="pill not-enrolled">Not enrolled</span>}</td></tr>)}</tbody></table>{!students.length && <div className="empty-state">No students yet. Add a student to begin.</div>}</div>
+        <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>STUDENT ID</th><th>COURSE / YEAR</th><th>FACE PROFILE</th><th>ACTION</th></tr></thead><tbody>{students.map((s) => <tr key={s.id}><td><div className="student-cell"><div className="student-avatar">{s.name.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase()}</div><strong>{s.name}</strong></div></td><td className="mono">{s.id}</td><td>{s.course}<small className="subline">{s.year}</small></td><td>{s.descriptor?.length ? <span className="pill enrolled">✓ Enrolled</span> : <span className="pill not-enrolled">Not enrolled</span>}</td><td><button className="delete-btn" type="button" onClick={() => removeStudent(s)} aria-label={`Delete ${s.name}`}>Delete</button></td></tr>)}</tbody></table>{!students.length && <div className="empty-state">No students yet. Add a student to begin.</div>}</div>
       </section>
       <section className="panel" id="records">
         <div className="panel-heading"><div><div className="eyebrow">ATTENDANCE LOG</div><h2>Recent Attendance</h2><p>Latest successful ID scans and face matches.</p></div><button className="secondary-btn" onClick={exportCsv} disabled={!attendance.length}>↓ Export CSV</button></div>
