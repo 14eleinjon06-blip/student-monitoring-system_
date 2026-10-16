@@ -5,12 +5,12 @@ import { BrowserMultiFormatReader } from "@zxing/browser";
 
 type Student = { id: string; name: string; course: string; year: string; photo?: string; descriptor?: number[] };
 type Attendance = { id: string; name: string; time: string; method: string; date: string };
-declare global { interface Window { faceapi?: any } }
+declare global { interface Window { faceapi?: any; Tesseract?: any } }
 
-const initialStudents: Student[] = [
-  { id: "2026-001", name: "Alex Santos", course: "BS Information Technology", year: "3rd Year" },
-  { id: "2026-002", name: "Jamie Cruz", course: "BS Information Technology", year: "2nd Year" },
-  { id: "2026-003", name: "Taylor Reyes", course: "BS Computer Science", year: "1st Year" },
+const demoStudents = [
+  { id: "2026-001", name: "Alex Santos" },
+  { id: "2026-002", name: "Jamie Cruz" },
+  { id: "2026-003", name: "Taylor Reyes" },
 ];
 
 export default function Home() {
@@ -21,6 +21,7 @@ export default function Home() {
   const [status, setStatus] = useState("Ready to scan an ID or recognize an enrolled face.");
   const [cameraOn, setCameraOn] = useState(false);
   const [qrScanning, setQrScanning] = useState(false);
+  const [printedIdScanning, setPrintedIdScanning] = useState(false);
   const [modelsReady, setModelsReady] = useState(false);
   const [faceBusy, setFaceBusy] = useState(false);
   const [newId, setNewId] = useState("");
@@ -31,21 +32,26 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scannerControlsRef = useRef<{ stop: () => void } | null>(null);
+  const printedScanStopRef = useRef<(() => void) | null>(null);
+  const ocrWorkerRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     try {
       const savedStudents = localStorage.getItem("sms_students_v2");
       const savedAttendance = localStorage.getItem("sms_attendance_v2");
-      setStudents(savedStudents ? JSON.parse(savedStudents) : initialStudents);
-      setAttendance(savedAttendance ? JSON.parse(savedAttendance) : []);
+      const storedStudents = savedStudents ? JSON.parse(savedStudents) as Student[] : [];
+      const oldDemoProfiles = new Set(demoStudents.map((student) => `${student.id}|${student.name}`));
+      setStudents(Array.isArray(storedStudents) ? storedStudents.filter((student) => !oldDemoProfiles.has(`${student.id}|${student.name}`)) : []);
+      const storedAttendance = savedAttendance ? JSON.parse(savedAttendance) as Attendance[] : [];
+      setAttendance(Array.isArray(storedAttendance) ? storedAttendance.filter((record) => !oldDemoProfiles.has(`${record.id}|${record.name}`)) : []);
     } catch {
-      setStudents(initialStudents);
+      setStudents([]);
       setAttendance([]);
     }
   }, []);
 
-  useEffect(() => { if (students.length) localStorage.setItem("sms_students_v2", JSON.stringify(students)); }, [students]);
+  useEffect(() => { localStorage.setItem("sms_students_v2", JSON.stringify(students)); }, [students]);
   useEffect(() => { localStorage.setItem("sms_attendance_v2", JSON.stringify(attendance)); }, [attendance]);
 
   const markAttendance = useCallback((student: Student, method: string) => {
@@ -115,7 +121,7 @@ export default function Home() {
     setFaceBusy(false);
   };
 
-  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); scannerControlsRef.current?.stop(); scannerControlsRef.current = null; }, []);
+  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); scannerControlsRef.current?.stop(); scannerControlsRef.current = null; printedScanStopRef.current?.(); }, []);
 
   const getDescriptor = async (input: HTMLVideoElement | HTMLImageElement) => {
     const api = await loadModels();
@@ -156,6 +162,84 @@ export default function Home() {
     setStatus("Point the camera at a student ID QR code or barcode…");
   };
 
+  const startPrintedIdScanner = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera access needs HTTPS or localhost. You can still enter the ID manually.");
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      setPrintedIdScanning(true);
+      setStatus("Hold the front of the card steady, with the printed I.D. NO. visible.");
+    } catch (e: any) {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setStatus(e?.message || "Unable to start the camera.");
+    }
+  };
+
+  useEffect(() => {
+    if (!printedIdScanning || activeTab !== "id" || !videoRef.current) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let busy = false;
+    const video = videoRef.current;
+    if (streamRef.current && video.srcObject !== streamRef.current) { video.srcObject = streamRef.current; void video.play(); }
+    const stop = () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+      void ocrWorkerRef.current?.terminate?.();
+      ocrWorkerRef.current = null;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (video) video.srcObject = null;
+      setPrintedIdScanning(false);
+    };
+    printedScanStopRef.current = stop;
+    const scanFrame = async () => {
+      if (!active || busy || !video.videoWidth) {
+        if (active) timer = setTimeout(scanFrame, 500);
+        return;
+      }
+      busy = true;
+      try {
+        if (!ocrWorkerRef.current) {
+          if (!window.Tesseract) {
+            await new Promise<void>((resolve, reject) => {
+              const script = document.createElement("script");
+              script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+              script.onload = () => resolve();
+              script.onerror = () => reject(new Error("Could not load text scanning. Check your internet connection."));
+              document.head.appendChild(script);
+            });
+          }
+          ocrWorkerRef.current = await window.Tesseract.createWorker("eng");
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext("2d")?.drawImage(video, 0, 0);
+        const { data } = await ocrWorkerRef.current.recognize(canvas);
+        const text = String(data?.text || "");
+        const labeled = text.match(/\bI\s*\.?\s*D\s*\.?\s*(?:NO|NUMBER)\s*\.?\s*[:#]?\s*([0-9OIl]{3})\s*[-–— ]?\s*([0-9OIl]{4})/i);
+        if (labeled) {
+          const normalize = (part: string) => part.toUpperCase().replace(/[O]/g, "0").replace(/[IL]/g, "1");
+          const id = `${normalize(labeled[1])}-${normalize(labeled[2])}`;
+          setIdInput(id);
+          setStatus(`Read ID ${id}. Check the number, then select Verify ID to record attendance.`);
+          stop();
+          return;
+        }
+      } catch (e: any) {
+        if (active) { setStatus(e?.message || "Could not read the printed ID. Try improving the lighting or enter it manually."); stop(); }
+        return;
+      } finally { busy = false; }
+      if (active) timer = setTimeout(scanFrame, 350);
+    };
+    setStatus("Starting text scanner… Point at the front card’s I.D. NO. and hold steady.");
+    void scanFrame();
+    return () => { stop(); printedScanStopRef.current = null; };
+  }, [printedIdScanning, activeTab]);
+
   useEffect(() => {
     if (!qrScanning || activeTab !== "id" || !videoRef.current) return;
     let active = true;
@@ -194,6 +278,12 @@ export default function Home() {
     setStatus("Student added. Start the camera and enroll their face to enable recognition.");
   };
 
+  const removeStudent = (student: Student) => {
+    if (!window.confirm(`Delete ${student.name} from the student directory?`)) return;
+    setStudents((prev) => prev.filter((s) => s.id !== student.id));
+    setStatus(`${student.name} was deleted from the student directory.`);
+  };
+
   const exportCsv = () => {
     const csv = ["Student ID,Name,Date,Time,Method", ...attendance.map((a) => [a.id, a.name, a.date, a.time, a.method].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))].join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
@@ -201,7 +291,8 @@ export default function Home() {
   };
 
   const today = new Date().toLocaleDateString();
-  const todayCount = attendance.filter((a) => a.date === today).length;
+  const presentCount = new Set(attendance.filter((a) => a.date === today).map((a) => a.id)).size;
+  const absentCount = Math.max(0, students.length - presentCount);
   const enrolledCount = students.filter((s) => s.descriptor?.length).length;
 
   return <main className="shell">
@@ -209,29 +300,29 @@ export default function Home() {
       <div className="brand"><div className="brand-icon">S</div><div><strong>STUDENT<span>MONITOR</span></strong><small>ATTENDANCE PORTAL</small></div></div>
       <div className="side-label">WORKSPACE</div>
       <button className="nav-item active" onClick={() => setActiveTab("id")}>▦ <span>Dashboard</span></button>
-      <button className="nav-item" onClick={() => { setActiveTab("id"); document.getElementById("scanner")?.scrollIntoView({ behavior: "smooth" }); }}>▤ <span>ID Scan</span></button>
+      <button className="nav-item" onClick={() => { setActiveTab("id"); document.getElementById("scanner")?.scrollIntoView({ behavior: "smooth" }); }}>▤ <span>PICTURE / SCANNER / ID SCANNER</span></button>
       <button className="nav-item" onClick={() => { setActiveTab("face"); document.getElementById("scanner")?.scrollIntoView({ behavior: "smooth" }); }}>◎ <span>Face Recognition</span></button>
-      <button className="nav-item" onClick={() => document.getElementById("students")?.scrollIntoView({ behavior: "smooth" })}>♙ <span>Students</span></button>
-      <button className="nav-item" onClick={() => document.getElementById("records")?.scrollIntoView({ behavior: "smooth" })}>▧ <span>Attendance Records</span></button>
+      <button className="nav-item" onClick={() => document.getElementById("students")?.scrollIntoView({ behavior: "smooth" })}>♙ <span>STUDENT INFORMATION</span></button>
+      <button className="nav-item" onClick={() => document.getElementById("records")?.scrollIntoView({ behavior: "smooth" })}>▧ <span>VIEW ATTENDANCE REPORT</span></button>
       <div className="sidebar-bottom"><div className="secure-dot" /> Browser-based demo<br /><small>Data stored on this device</small></div>
     </aside>
     <section className="main-area">
       <header className="topbar"><div><div className="eyebrow">CAMPUS OPERATIONS / ATTENDANCE</div><h1>Student Monitoring System</h1><p>Manage student attendance with ID scanning and face recognition.</p></div><div className="date-pill">◷ {new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</div></header>
       <div className="stats">
-        <article className="stat-card"><div className="stat-icon blue">♙</div><div><span>REGISTERED STUDENTS</span><strong>{students.length}</strong><small>Student profiles</small></div></article>
-        <article className="stat-card"><div className="stat-icon green">✓</div><div><span>ATTENDANCE TODAY</span><strong>{todayCount}</strong><small>Unique student records</small></div></article>
-        <article className="stat-card"><div className="stat-icon purple">◎</div><div><span>FACES ENROLLED</span><strong>{enrolledCount}</strong><small>Ready for matching</small></div></article>
+        <article className="stat-card"><div className="stat-icon blue">♙</div><div><span>TOTAL STUDENT</span><strong>{students.length}</strong><small>Registered students</small></div></article>
+        <article className="stat-card"><div className="stat-icon green">✓</div><div><span>PRESENT</span><strong>{presentCount}</strong><small>Attendance recorded today</small></div></article>
+        <article className="stat-card"><div className="stat-icon purple">◎</div><div><span>ABSENT</span><strong>{absentCount}</strong><small>Not yet recorded today</small></div></article>
       </div>
       <section className="panel scanner-panel" id="scanner">
-        <div className="panel-heading"><div><div className="eyebrow">QUICK ATTENDANCE</div><h2>Identify Student</h2><p>Choose an ID scan or face recognition method.</p></div><span className="live-badge"><i /> SYSTEM READY</span></div>
+        <div className="panel-heading"><div><div className="eyebrow">RECORD ATTENDANCE</div><h2>PICTURE / SCANNER / ID SCANNER</h2><p>Choose an ID scan or face recognition method.</p></div><span className="live-badge"><i /> SYSTEM READY</span></div>
         <div className="tabs"><button className={activeTab === "id" ? "tab selected" : "tab"} onClick={() => setActiveTab("id")}>▤ ID Scan</button><button className={activeTab === "face" ? "tab selected" : "tab"} onClick={() => setActiveTab("face")}>◎ Face Recognition</button></div>
         {activeTab === "id" ? <div className="scan-content">
-          {qrScanning && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /></div>}
+          {(qrScanning || printedIdScanning) && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /><span className="scan-camera-label">{printedIdScanning ? "Keep the I.D. NO. in view" : "Align QR code or barcode"}</span></div>}
           <div className="scan-illustration"><div className="id-card-graphic"><div className="avatar-placeholder">♙</div><div className="fake-lines"><b /><i /><i /></div><div className="barcode">▥ ▥ ▥ ▥ ▥ ▥ ▥</div></div><div className="scan-ring">▤</div></div>
-          <div className="scan-form"><h3>Scan student ID</h3><p>Use a USB barcode scanner, scan a QR code with the camera, or enter the ID manually.</p>
-            <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="e.g. 2026-001" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
-            <button className="secondary-btn" onClick={() => qrScanning ? setQrScanning(false) : startQrScanner()}>{qrScanning ? "Stop camera scanner" : "◎ Open camera barcode / QR scanner"}</button>
-            <div className="hint">Demo IDs: {students.slice(0, 3).map((s) => s.id).join(" · ") || "Add a student to begin"}</div>
+          <div className="scan-form"><h3>Scan student ID</h3><p>Use a USB scanner, scan a QR code or barcode, read the printed I.D. NO. from your card, or enter it manually.</p>
+            <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="e.g. 123-4567" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
+            <div className="button-row scan-buttons"><button className="secondary-btn" onClick={() => qrScanning ? setQrScanning(false) : startQrScanner()}>{qrScanning ? "Stop barcode scanner" : "◎ Scan QR / barcode"}</button><button className="secondary-btn" onClick={() => printedIdScanning ? printedScanStopRef.current?.() : void startPrintedIdScanner()}>{printedIdScanning ? "Stop text scanner" : "▤ Read printed ID number"}</button></div>
+            <div className="hint">Printed ID reading looks for the number beside “I.D. NO.” on the front of your card. Check the result before verifying. The student must already be in the directory. Add students in the Student Directory below.</div>
           </div>
         </div> : <div className="face-content">
           <div className="camera-frame">{cameraOn ? <video ref={videoRef} autoPlay muted playsInline /> : <div className="camera-placeholder"><div className="face-outline">◯</div><strong>Camera is off</strong><span>Turn on the camera to enroll or recognize a face.</span></div>}{cameraOn && <div className="face-guide" />}</div>
@@ -243,12 +334,12 @@ export default function Home() {
         <div className={status.toLowerCase().includes("recorded") ? "status-message success" : "status-message"} role="status"><span>ⓘ</span>{status}</div>
       </section>
       <section className="panel" id="students">
-        <div className="panel-heading"><div><div className="eyebrow">DIRECTORY</div><h2>Student Directory</h2><p>Manage registered student profiles and face enrollment.</p></div><button className="primary-btn" onClick={() => setShowAdd((v) => !v)}>＋ Add Student</button></div>
+        <div className="panel-heading"><div><div className="eyebrow">DIRECTORY</div><h2>STUDENT INFORMATION</h2><p>Manage student profiles and face enrollment.</p></div><button className="primary-btn" onClick={() => setShowAdd((v) => !v)}>＋ Add Student</button></div>
         {showAdd && <form className="add-form" onSubmit={addStudent}><input value={newId} onChange={(e) => setNewId(e.target.value)} placeholder="Student ID" required /><input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Full name" required /><select value={newCourse} onChange={(e) => setNewCourse(e.target.value)}><option>BS Information Technology</option><option>BS Computer Science</option><option>BS Information Systems</option><option>Other</option></select><select value={newYear} onChange={(e) => setNewYear(e.target.value)}><option>1st Year</option><option>2nd Year</option><option>3rd Year</option><option>4th Year</option></select><button className="primary-btn" type="submit">Save student</button></form>}
-        <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>STUDENT ID</th><th>COURSE / YEAR</th><th>FACE PROFILE</th></tr></thead><tbody>{students.map((s) => <tr key={s.id}><td><div className="student-cell"><div className="student-avatar">{s.name.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase()}</div><strong>{s.name}</strong></div></td><td className="mono">{s.id}</td><td>{s.course}<small className="subline">{s.year}</small></td><td>{s.descriptor?.length ? <span className="pill enrolled">✓ Enrolled</span> : <span className="pill not-enrolled">Not enrolled</span>}</td></tr>)}</tbody></table>{!students.length && <div className="empty-state">No students yet. Add a student to begin.</div>}</div>
+        <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>STUDENT ID</th><th>COURSE / YEAR</th><th>FACE PROFILE</th><th>ACTION</th></tr></thead><tbody>{students.map((s) => <tr key={s.id}><td><div className="student-cell"><div className="student-avatar">{s.name.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase()}</div><strong>{s.name}</strong></div></td><td className="mono">{s.id}</td><td>{s.course}<small className="subline">{s.year}</small></td><td>{s.descriptor?.length ? <span className="pill enrolled">✓ Enrolled</span> : <span className="pill not-enrolled">Not enrolled</span>}</td><td><button className="delete-btn" type="button" onClick={() => removeStudent(s)} aria-label={`Delete ${s.name}`}>Delete</button></td></tr>)}</tbody></table>{!students.length && <div className="empty-state">No students yet. Add a student to begin.</div>}</div>
       </section>
       <section className="panel" id="records">
-        <div className="panel-heading"><div><div className="eyebrow">ATTENDANCE LOG</div><h2>Recent Attendance</h2><p>Latest successful ID scans and face matches.</p></div><button className="secondary-btn" onClick={exportCsv} disabled={!attendance.length}>↓ Export CSV</button></div>
+        <div className="panel-heading"><div><div className="eyebrow">ATTENDANCE LOG</div><h2>VIEW ATTENDANCE REPORT</h2><p>Review attendance records and export a report.</p></div><button className="secondary-btn" onClick={exportCsv} disabled={!attendance.length}>↓ Export CSV</button></div>
         <div className="table-wrap"><table><thead><tr><th>STUDENT</th><th>DATE / TIME</th><th>METHOD</th><th>STATUS</th></tr></thead><tbody>{attendance.slice(0, 20).map((a, i) => <tr key={a.id + a.date}><td><div className="student-cell"><div className="student-avatar">{a.name.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase()}</div><div><strong>{a.name}</strong><small className="subline mono">{a.id}</small></div></div></td><td>{a.date}<small className="subline">{a.time}</small></td><td><span className="method-tag">{a.method}</span></td><td><span className="pill enrolled">✓ Recorded</span></td></tr>)}</tbody></table>{!attendance.length && <div className="empty-state"><div className="empty-icon">▧</div><strong>No attendance records yet</strong><span>Scan a student ID or recognize an enrolled face to record attendance.</span></div>}</div>
       </section>
       <footer>STUDENT MONITORING SYSTEM <span>•</span> ID SCANNING & FACE RECOGNITION <span>•</span> DEMO BUILD</footer>
