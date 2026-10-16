@@ -20,6 +20,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"id" | "face">("id");
   const [status, setStatus] = useState("Ready to scan an ID or recognize an enrolled face.");
   const [cameraOn, setCameraOn] = useState(false);
+  const [qrScanning, setQrScanning] = useState(false);
   const [modelsReady, setModelsReady] = useState(false);
   const [faceBusy, setFaceBusy] = useState(false);
   const [newId, setNewId] = useState("");
@@ -150,25 +151,32 @@ export default function Home() {
     finally { setFaceBusy(false); }
   };
 
-  const startQrScanner = async () => {
-    try {
-      if (!videoRef.current) return;
-      const reader = new BrowserMultiFormatReader();
-      readerRef.current = reader;
-      setStatus("Point the camera at a student ID QR or barcode…");
-      await reader.decodeFromVideoDevice(undefined, videoRef.current, (result) => {
-        if (result) {
-          const text = result.getText();
-          reader.reset();
-          setIdInput(text);
-          setStatus(`Scanned ID: ${text}. Checking student record…`);
-          const found = students.find((s) => s.id.toLowerCase() === text.trim().toLowerCase());
-          if (found) markAttendance(found, "QR / Barcode Scan");
-          else setStatus(`Scanned “${text}” but no matching student ID exists.`);
-        }
-      });
-    } catch (e: any) { setStatus(e?.message || "Unable to start ID camera scanner."); }
+  const startQrScanner = () => {
+    setQrScanning(true);
+    setStatus("Point the camera at a student ID QR code or barcode…");
   };
+
+  useEffect(() => {
+    if (!qrScanning || activeTab !== "id" || !videoRef.current) return;
+    let active = true;
+    const reader = new BrowserMultiFormatReader();
+    readerRef.current = reader;
+    reader.decodeFromVideoDevice(undefined, videoRef.current, (result) => {
+      if (!result || !active) return;
+      active = false;
+      reader.reset();
+      setQrScanning(false);
+      const scanned = result.getText().trim();
+      setIdInput(scanned);
+      const found = students.find((s) => s.id.toLowerCase() === scanned.toLowerCase());
+      if (found) markAttendance(found, "QR / Barcode Scan");
+      else setStatus(`Scanned “${scanned}” but no matching student ID exists.`);
+    }).catch((e: any) => {
+      if (active) setStatus(e?.message || "Unable to start ID camera scanner.");
+      setQrScanning(false);
+    });
+    return () => { active = false; reader.reset(); };
+  }, [qrScanning, activeTab, students, markAttendance]);
 
   const addStudent = (e: React.FormEvent) => {
     e.preventDefault();
@@ -211,10 +219,11 @@ export default function Home() {
         <div className="panel-heading"><div><div className="eyebrow">QUICK ATTENDANCE</div><h2>Identify Student</h2><p>Choose an ID scan or face recognition method.</p></div><span className="live-badge"><i /> SYSTEM READY</span></div>
         <div className="tabs"><button className={activeTab === "id" ? "tab selected" : "tab"} onClick={() => setActiveTab("id")}>▤ ID Scan</button><button className={activeTab === "face" ? "tab selected" : "tab"} onClick={() => setActiveTab("face")}>◎ Face Recognition</button></div>
         {activeTab === "id" ? <div className="scan-content">
+          {qrScanning && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /></div>}
           <div className="scan-illustration"><div className="id-card-graphic"><div className="avatar-placeholder">♙</div><div className="fake-lines"><b /><i /><i /></div><div className="barcode">▥ ▥ ▥ ▥ ▥ ▥ ▥</div></div><div className="scan-ring">▤</div></div>
           <div className="scan-form"><h3>Scan student ID</h3><p>Use a USB barcode scanner, scan a QR code with the camera, or enter the ID manually.</p>
             <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="e.g. 2026-001" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
-            <button className="secondary-btn" onClick={startQrScanner}>◎ Open camera barcode / QR scanner</button>
+            <button className="secondary-btn" onClick={() => qrScanning ? setQrScanning(false) : startQrScanner()}>{qrScanning ? "Stop camera scanner" : "◎ Open camera barcode / QR scanner"}</button>
             <div className="hint">Demo IDs: {students.slice(0, 3).map((s) => s.id).join(" · ") || "Add a student to begin"}</div>
           </div>
         </div> : <div className="face-content">
