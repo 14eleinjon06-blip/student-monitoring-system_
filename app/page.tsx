@@ -5,7 +5,7 @@ import { BrowserMultiFormatReader } from "@zxing/browser";
 
 type Student = { id: string; name: string; course: string; year: string; photo?: string; descriptor?: number[] };
 type Attendance = { id: string; name: string; time: string; method: string; date: string };
-declare global { interface Window { faceapi?: any } }
+declare global { interface Window { faceapi?: any; Tesseract?: any } }
 
 const initialStudents: Student[] = [
   { id: "2026-001", name: "Alex Santos", course: "BS Information Technology", year: "3rd Year" },
@@ -21,6 +21,7 @@ export default function Home() {
   const [status, setStatus] = useState("Ready to scan an ID or recognize an enrolled face.");
   const [cameraOn, setCameraOn] = useState(false);
   const [qrScanning, setQrScanning] = useState(false);
+  const [printedIdScanning, setPrintedIdScanning] = useState(false);
   const [modelsReady, setModelsReady] = useState(false);
   const [faceBusy, setFaceBusy] = useState(false);
   const [newId, setNewId] = useState("");
@@ -31,6 +32,8 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scannerControlsRef = useRef<{ stop: () => void } | null>(null);
+  const printedScanStopRef = useRef<(() => void) | null>(null);
+  const ocrWorkerRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -115,7 +118,7 @@ export default function Home() {
     setFaceBusy(false);
   };
 
-  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); scannerControlsRef.current?.stop(); scannerControlsRef.current = null; }, []);
+  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); scannerControlsRef.current?.stop(); scannerControlsRef.current = null; printedScanStopRef.current?.(); }, []);
 
   const getDescriptor = async (input: HTMLVideoElement | HTMLImageElement) => {
     const api = await loadModels();
@@ -155,6 +158,84 @@ export default function Home() {
     setQrScanning(true);
     setStatus("Point the camera at a student ID QR code or barcode…");
   };
+
+  const startPrintedIdScanner = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera access needs HTTPS or localhost. You can still enter the ID manually.");
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      setPrintedIdScanning(true);
+      setStatus("Hold the front of the card steady, with the printed I.D. NO. visible.");
+    } catch (e: any) {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setStatus(e?.message || "Unable to start the camera.");
+    }
+  };
+
+  useEffect(() => {
+    if (!printedIdScanning || activeTab !== "id" || !videoRef.current) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let busy = false;
+    const video = videoRef.current;
+    if (streamRef.current && video.srcObject !== streamRef.current) { video.srcObject = streamRef.current; void video.play(); }
+    const stop = () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+      void ocrWorkerRef.current?.terminate?.();
+      ocrWorkerRef.current = null;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (video) video.srcObject = null;
+      setPrintedIdScanning(false);
+    };
+    printedScanStopRef.current = stop;
+    const scanFrame = async () => {
+      if (!active || busy || !video.videoWidth) {
+        if (active) timer = setTimeout(scanFrame, 500);
+        return;
+      }
+      busy = true;
+      try {
+        if (!ocrWorkerRef.current) {
+          if (!window.Tesseract) {
+            await new Promise<void>((resolve, reject) => {
+              const script = document.createElement("script");
+              script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+              script.onload = () => resolve();
+              script.onerror = () => reject(new Error("Could not load text scanning. Check your internet connection."));
+              document.head.appendChild(script);
+            });
+          }
+          ocrWorkerRef.current = await window.Tesseract.createWorker("eng");
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext("2d")?.drawImage(video, 0, 0);
+        const { data } = await ocrWorkerRef.current.recognize(canvas);
+        const text = String(data?.text || "");
+        const labeled = text.match(/\bI\s*\.?\s*D\s*\.?\s*(?:NO|NUMBER)\s*\.?\s*[:#]?\s*([0-9OIl]{3})\s*[-–— ]?\s*([0-9OIl]{4})/i);
+        if (labeled) {
+          const normalize = (part: string) => part.toUpperCase().replace(/[O]/g, "0").replace(/[IL]/g, "1");
+          const id = `${normalize(labeled[1])}-${normalize(labeled[2])}`;
+          setIdInput(id);
+          setStatus(`Read ID ${id}. Check the number, then select Verify ID to record attendance.`);
+          stop();
+          return;
+        }
+      } catch (e: any) {
+        if (active) { setStatus(e?.message || "Could not read the printed ID. Try improving the lighting or enter it manually."); stop(); }
+        return;
+      } finally { busy = false; }
+      if (active) timer = setTimeout(scanFrame, 350);
+    };
+    setStatus("Starting text scanner… Point at the front card’s I.D. NO. and hold steady.");
+    void scanFrame();
+    return () => { stop(); printedScanStopRef.current = null; };
+  }, [printedIdScanning, activeTab]);
 
   useEffect(() => {
     if (!qrScanning || activeTab !== "id" || !videoRef.current) return;
@@ -226,12 +307,12 @@ export default function Home() {
         <div className="panel-heading"><div><div className="eyebrow">QUICK ATTENDANCE</div><h2>Identify Student</h2><p>Choose an ID scan or face recognition method.</p></div><span className="live-badge"><i /> SYSTEM READY</span></div>
         <div className="tabs"><button className={activeTab === "id" ? "tab selected" : "tab"} onClick={() => setActiveTab("id")}>▤ ID Scan</button><button className={activeTab === "face" ? "tab selected" : "tab"} onClick={() => setActiveTab("face")}>◎ Face Recognition</button></div>
         {activeTab === "id" ? <div className="scan-content">
-          {qrScanning && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /></div>}
+          {(qrScanning || printedIdScanning) && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /><span className="scan-camera-label">{printedIdScanning ? "Keep the I.D. NO. in view" : "Align QR code or barcode"}</span></div>}
           <div className="scan-illustration"><div className="id-card-graphic"><div className="avatar-placeholder">♙</div><div className="fake-lines"><b /><i /><i /></div><div className="barcode">▥ ▥ ▥ ▥ ▥ ▥ ▥</div></div><div className="scan-ring">▤</div></div>
-          <div className="scan-form"><h3>Scan student ID</h3><p>Use a USB barcode scanner, scan a QR code with the camera, or enter the ID manually.</p>
+          <div className="scan-form"><h3>Scan student ID</h3><p>Use a USB scanner, scan a QR code or barcode, read the printed I.D. NO. from your card, or enter it manually.</p>
             <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="e.g. 2026-001" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
-            <button className="secondary-btn" onClick={() => qrScanning ? setQrScanning(false) : startQrScanner()}>{qrScanning ? "Stop camera scanner" : "◎ Open camera barcode / QR scanner"}</button>
-            <div className="hint">Demo IDs: {students.slice(0, 3).map((s) => s.id).join(" · ") || "Add a student to begin"}</div>
+            <div className="button-row scan-buttons"><button className="secondary-btn" onClick={() => qrScanning ? setQrScanning(false) : startQrScanner()}>{qrScanning ? "Stop barcode scanner" : "◎ Scan QR / barcode"}</button><button className="secondary-btn" onClick={() => printedIdScanning ? printedScanStopRef.current?.() : void startPrintedIdScanner()}>{printedIdScanning ? "Stop text scanner" : "▤ Read printed ID number"}</button></div>
+            <div className="hint">Printed ID reading looks for the number beside “I.D. NO.” on the front of your card. Check the result before verifying. The student must already be in the directory. Demo IDs: {students.slice(0, 3).map((s) => s.id).join(" · ") || "Add a student to begin"}</div>
           </div>
         </div> : <div className="face-content">
           <div className="camera-frame">{cameraOn ? <video ref={videoRef} autoPlay muted playsInline /> : <div className="camera-placeholder"><div className="face-outline">◯</div><strong>Camera is off</strong><span>Turn on the camera to enroll or recognize a face.</span></div>}{cameraOn && <div className="face-guide" />}</div>
