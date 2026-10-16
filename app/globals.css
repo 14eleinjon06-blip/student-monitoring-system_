@@ -3,3 +3,4 @@
 
 .scan-buttons{margin-top:12px;margin-bottom:0}.scan-buttons .secondary-btn{flex:1;white-space:normal}.scan-camera-label{position:absolute;bottom:12px;left:12px;right:12px;text-align:center;background:#07101acc;color:#e3e9f6;border-radius:6px;padding:8px;font-size:11px}.qr-camera .face-guide{inset:25% 9%;border:2px dashed #7ce2c1;border-radius:8px}@media(max-width:760px){.scan-buttons{flex-direction:column}.scan-buttons .secondary-btn{width:100%}}
 .delete-btn{border:1px solid #f0d8d8;background:#fff7f7;color:#a13d3d;border-radius:7px;padding:7px 10px;font:600 11px 'DM Sans';cursor:pointer}.delete-btn:hover{background:#ffeded;border-color:#e8bebe}@media(max-width:760px){.delete-btn{padding:7px 9px}}
+body{text-transform:uppercase}.nav-item{font-size:11px;line-height:1.45}@media(max-width:760px){.sidebar .nav-item{font-size:10px;max-width:48%;white-space:normal;vertical-align:middle}}
