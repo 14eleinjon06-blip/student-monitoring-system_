@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
 
 type Student = { id: string; name: string; course: string; year: string; photo?: string; descriptor?: number[] };
 type Attendance = { id: string; name: string; time: string; method: string; date: string };
@@ -20,7 +19,6 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"id" | "face">("id");
   const [status, setStatus] = useState("Ready to scan an ID or recognize an enrolled face.");
   const [cameraOn, setCameraOn] = useState(false);
-  const [qrScanning, setQrScanning] = useState(false);
   const [printedIdScanning, setPrintedIdScanning] = useState(false);
   const [modelsReady, setModelsReady] = useState(false);
   const [faceBusy, setFaceBusy] = useState(false);
@@ -31,7 +29,6 @@ export default function Home() {
   const [showAdd, setShowAdd] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const scannerControlsRef = useRef<{ stop: () => void } | null>(null);
   const printedScanStopRef = useRef<(() => void) | null>(null);
   const ocrWorkerRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -121,7 +118,7 @@ export default function Home() {
     setFaceBusy(false);
   };
 
-  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); scannerControlsRef.current?.stop(); scannerControlsRef.current = null; printedScanStopRef.current?.(); }, []);
+  useEffect(() => () => { streamRef.current?.getTracks().forEach((t) => t.stop()); printedScanStopRef.current?.(); }, []);
 
   const getDescriptor = async (input: HTMLVideoElement | HTMLImageElement) => {
     const api = await loadModels();
@@ -155,11 +152,6 @@ export default function Home() {
       setStatus(`Recognized ${matches[0].student.name} (match distance ${matches[0].distance.toFixed(2)}).`);
     } catch (e: any) { setStatus(e?.message || "Face recognition failed."); }
     finally { setFaceBusy(false); }
-  };
-
-  const startQrScanner = () => {
-    setQrScanning(true);
-    setStatus("Point the camera at a student ID QR code or barcode…");
   };
 
   const startPrintedIdScanner = async () => {
@@ -240,34 +232,7 @@ export default function Home() {
     return () => { stop(); printedScanStopRef.current = null; };
   }, [printedIdScanning, activeTab]);
 
-  useEffect(() => {
-    if (!qrScanning || activeTab !== "id" || !videoRef.current) return;
-    let active = true;
-    const reader = new BrowserMultiFormatReader();
-    reader.decodeFromVideoDevice(undefined, videoRef.current, (result) => {
-      if (!result || !active) return;
-      active = false;
-      scannerControlsRef.current?.stop();
-      scannerControlsRef.current = null;
-      setQrScanning(false);
-      const scanned = result.getText().trim();
-      setIdInput(scanned);
-      const found = students.find((s) => s.id.toLowerCase() === scanned.toLowerCase());
-      if (found) markAttendance(found, "QR / Barcode Scan");
-      else setStatus(`Scanned “${scanned}” but no matching student ID exists.`);
-    }).then((controls) => {
-      if (!active) controls.stop();
-      else scannerControlsRef.current = controls;
-    }).catch((e: any) => {
-      if (active) setStatus(e?.message || "Unable to start ID camera scanner.");
-      setQrScanning(false);
-    });
-    return () => {
-      active = false;
-      scannerControlsRef.current?.stop();
-      scannerControlsRef.current = null;
-    };
-  }, [qrScanning, activeTab, students, markAttendance]);
+
 
   const addStudent = (e: React.FormEvent) => {
     e.preventDefault();
@@ -317,17 +282,17 @@ export default function Home() {
         <div className="panel-heading"><div><div className="eyebrow">RECORD ATTENDANCE</div><h2>PICTURE / SCANNER / ID SCANNER</h2><p>Choose an ID scan or face recognition method.</p></div><span className="live-badge"><i /> SYSTEM READY</span></div>
         <div className="tabs"><button className={activeTab === "id" ? "tab selected" : "tab"} onClick={() => setActiveTab("id")}>▤ ID Scan</button><button className={activeTab === "face" ? "tab selected" : "tab"} onClick={() => setActiveTab("face")}>◎ Face Recognition</button></div>
         {activeTab === "id" ? <div className="scan-content">
-          {(qrScanning || printedIdScanning) && <div className="camera-frame qr-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="face-guide" /><span className="scan-camera-label">{printedIdScanning ? "Keep the I.D. NO. in view" : "Align QR code or barcode"}</span></div>}
-          <div className="scan-illustration"><div className="id-card-graphic"><div className="avatar-placeholder">♙</div><div className="fake-lines"><b /><i /><i /></div><div className="barcode">▥ ▥ ▥ ▥ ▥ ▥ ▥</div></div><div className="scan-ring">▤</div></div>
-          <div className="scan-form"><h3>Scan student ID</h3><p>Use a USB scanner, scan a QR code or barcode, read the printed I.D. NO. from your card, or enter it manually.</p>
-            <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="e.g. 123-4567" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
-            <div className="button-row scan-buttons"><button className="secondary-btn" onClick={() => qrScanning ? setQrScanning(false) : startQrScanner()}>{qrScanning ? "Stop barcode scanner" : "◎ Scan QR / barcode"}</button><button className="secondary-btn" onClick={() => printedIdScanning ? printedScanStopRef.current?.() : void startPrintedIdScanner()}>{printedIdScanning ? "Stop text scanner" : "▤ Read printed ID number"}</button></div>
-            <div className="hint">Printed ID reading looks for the number beside “I.D. NO.” on the front of your card. Check the result before verifying. The student must already be in the directory. Add students in the Student Directory below.</div>
+          {printedIdScanning && <div className="camera-frame id-camera"><video ref={videoRef} autoPlay muted playsInline /><div className="id-guide"><span>I.D. NO.</span></div><span className="scan-camera-label">CENTER THE PRINTED I.D. NO. HERE</span></div>}
+          <div className="scan-illustration"><div className="id-card-graphic"><div className="avatar-placeholder">♙</div><div className="fake-lines"><b /><i /><i /></div><div className="card-id-number">I.D. NO. &nbsp; 241-0035</div></div><div className="scan-ring">▤</div></div>
+          <div className="scan-form"><h3>Scan your student ID</h3><p>Your card has no barcode. Use the camera to read the printed number, or type the number shown beside I.D. NO.</p>
+            <form onSubmit={(e) => { e.preventDefault(); scanId(); }}><label htmlFor="student-id">STUDENT ID NUMBER</label><div className="input-row"><input id="student-id" autoFocus value={idInput} onChange={(e) => setIdInput(e.target.value)} placeholder="E.G. 241-0035" /><button className="primary-btn" type="submit">Verify ID <span>→</span></button></div></form>
+            <div className="button-row scan-buttons"><button className="primary-btn" onClick={() => printedIdScanning ? printedScanStopRef.current?.() : void startPrintedIdScanner()}>{printedIdScanning ? "STOP CAMERA" : "OPEN CAMERA TO READ ID"}</button></div>
+            <div className="hint scan-steps"><strong>HOW TO SCAN</strong><span>1. Allow camera access.</span><span>2. Hold the FRONT of your card steady and fit the whole card in the guide.</span><span>3. Keep the printed I.D. NO. clear and well lit.</span><span>4. Check the number, then tap VERIFY ID.</span><span>Camera not working? Type the number. Add the student to STUDENT INFORMATION first.</span></div>
           </div>
         </div> : <div className="face-content">
-          <div className="camera-frame">{cameraOn ? <video ref={videoRef} autoPlay muted playsInline /> : <div className="camera-placeholder"><div className="face-outline">◯</div><strong>Camera is off</strong><span>Turn on the camera to enroll or recognize a face.</span></div>}{cameraOn && <div className="face-guide" />}</div>
-          <div className="face-controls"><h3>Face recognition</h3><p>Enroll each student’s face once. The browser compares a live face descriptor against enrolled student profiles.</p>
-            {!cameraOn ? <button className="primary-btn" onClick={startCamera}>Enable camera <span>→</span></button> : <><div className="button-row"><button className="primary-btn" disabled={faceBusy || !modelsReady} onClick={recognizeFace}>{faceBusy ? "Checking…" : "Recognize face"}</button><button className="secondary-btn" onClick={stopCamera}>Turn off camera</button></div><label htmlFor="enroll-student">ENROLL FACE FOR STUDENT</label><select id="enroll-student" defaultValue="" onChange={(e) => { const s = students.find((x) => x.id === e.target.value); if (s) void enrollFace(s); }}><option value="" disabled>Select student, then capture face</option>{students.map((s) => <option key={s.id} value={s.id}>{s.name} — {s.id}{s.descriptor?.length ? " (enrolled)" : ""}</option>)}</select></>}
+          <div className="camera-frame">{cameraOn ? <video ref={videoRef} autoPlay muted playsInline /> : <div className="camera-placeholder"><div className="face-outline">◯</div><strong>Camera is off</strong><span>Use this for a live face only. The photo printed on an ID card cannot be recognized.</span></div>}{cameraOn && <div className="face-guide" />}</div>
+          <div className="face-controls"><h3>Face recognition</h3><p>Face scan is optional. It uses the student’s LIVE face in the camera, not the photo printed on the ID card. Add a student, enroll their face once, then tap RECOGNIZE FACE.</p>
+            {!cameraOn ? <button className="primary-btn" onClick={startCamera}>Enable camera <span>→</span></button> : <><div className="button-row"><button className="primary-btn" disabled={faceBusy || !modelsReady} onClick={recognizeFace}>{faceBusy ? "Checking…" : "Recognize face"}</button><button className="secondary-btn" onClick={stopCamera}>Turn off camera</button></div><label htmlFor="enroll-student">ENROLL FACE FOR STUDENT</label><select id="enroll-student" defaultValue="" onChange={(e) => { const s = students.find((x) => x.id === e.target.value); if (s) void enrollFace(s); }}><option value="" disabled>Choose a student to enroll their live face</option>{students.map((s) => <option key={s.id} value={s.id}>{s.name} — {s.id}{s.descriptor?.length ? " (enrolled)" : ""}</option>)}</select></>}
             <div className="hint">{modelsReady ? "Face models loaded" : "Recognition requires internet access to load AI models."} Face data is kept in this browser only.</div>
           </div>
         </div>}
